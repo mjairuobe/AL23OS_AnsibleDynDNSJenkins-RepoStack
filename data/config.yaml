@@ -11,7 +11,7 @@ jenkins:
       allowsSignup: false
       users:
         - id: "admin"
-          password: ${JENKINS_ADMIN_PASSWORD}
+          password: "${JENKINS_ADMIN_PASSWORD}"
   
   authorizationStrategy:
     globalMatrix:
@@ -29,8 +29,8 @@ jenkins:
 
 unclassified:
   location:
-    url: ${JENKINS_BASE_URL}
-    adminAddress: ${JENKINS_ADMIN_MAIL}
+    url: "${JENKINS_BASE_URL}"
+    adminAddress: "${JENKINS_ADMIN_MAIL}"
 
 # Job DSL — Minimaltest für Multibranch (ohne Folder-Pfad).
 # Wenn das scheitert, fehlen typisch: workflow-multibranch, branch-api, git, workflow-job,
