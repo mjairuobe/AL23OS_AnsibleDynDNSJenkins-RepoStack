@@ -80,21 +80,6 @@
           when: (swap_total_kb_cmd.stdout | int) < (swap_required_kb | int)
 
     # -----------------------------
-    # 1️⃣ Python 3.11 installieren
-    # -----------------------------
-    # Für Jenkinsfile: python3.11 -m venv + pip install. Auf EL/Fedora liefert das
-    # Basis-RPM oft kein ensurepip; ohne python3.11-pip schlägt venv/pip fehl.
-    # -devel + gcc: Wheels mit C-Extensions bauen (pip install -e ".[dev]").
-    - name: Install Python 3.11
-      ansible.builtin.dnf:
-        name:
-          - python3.11
-          - python3.11-pip
-          - python3.11-devel
-          - gcc
-        state: present
-
-    # -----------------------------
     # 2️⃣ Docker installieren
     # -----------------------------
     - name: Install Docker
@@ -143,24 +128,6 @@
       when: compose_check.rc != 0
       tags:
         - docker-compose
-
-    # -----------------------------
-    # 3️⃣ MongoDB installieren
-    # -----------------------------
-    - name: MongoDB Repository hinzufügen
-      ansible.builtin.yum_repository:
-        name: mongodb-org-8.2
-        description: MongoDB Repository
-        baseurl: https://repo.mongodb.org/yum/redhat/9/mongodb-org/8.2/x86_64/
-        gpgcheck: true
-        enabled: true
-        gpgkey: https://pgp.mongodb.com/server-8.0.asc
-
-    - name: MongoDB Pakete installieren
-      ansible.builtin.dnf:
-        name: mongodb-org
-        state: present
-        update_cache: true
 
     # -----------------------------
     # 4️⃣ Jenkins installieren
