@@ -1,5 +1,5 @@
 ---
-- name: Setup DevOps Server
+- name: Setup Ansible, Docker, Jenkins, SSL, Nginx and No-IP2 DynDNS on Amazon Linux 2023 Server
   hosts: devops
   become: true
 
