@@ -1,0 +1,42 @@
+---
+# Nicht-sensitive Konfiguration — nach vars.yaml kopieren und anpassen.
+
+# Swap (nur auf Amazon Linux, Tasks in site.yaml)
+swap_size_gb: 8
+swap_file_path: /swapfile
+
+jenkins_http_port: 8080
+jenkins_tmp_dir: /var/lib/jenkins/tmp
+nginx_server_name: jenkins.example.org
+
+# Lokale Dateien relativ zum Playbook (Zertifikate, No-IP, …)
+ssl_cert_src: ./data/fullchain.pem
+ssl_key_src: ./data/privkey.pem
+noip_service_src: ./data/noip.service
+noip_config_src: ./data/no-ip2.conf
+
+# Remote-Pfade
+ssl_cert_dir: /etc/sslcerts/
+ssl_cert_dest: /etc/sslcerts/fullchain.pem
+ssl_key_dest: /etc/sslcerts/privkey.pem
+noip_service_dest: /etc/systemd/system/noip.service
+noip_config_dest: /etc/no-ip2.conf
+
+mongo_port: 27017
+
+# Öffentliche Jenkins-URL (REST). Basis ohne trailing slash für Modul-Pfade.
+jenkins_url: https://jenkins.example.org/
+jenkins_admin_mail: admin@example.com
+jenkins_api_base: "{{ jenkins_url | regex_replace('/+$', '') }}"
+
+jenkins_ansible_token_name: ansible-playbook
+
+jenkins_casc_src: "./data/config.yaml"
+jenkins_casc_dest: "/var/lib/jenkins/jenkins.yaml"
+jenkins_casc_config_dir: "/var/lib/jenkins/casc_configs"
+
+# Jenkins-Credential-IDs (verwendet im Jenkinsfile / Branches)
+jenkins_cred_github_id: github
+jenkins_cred_dockerhub_id: dockerhub-creds
+jenkins_cred_openai_id: openai-api-key
+jenkins_cred_mongodb_id: mongodb-creds

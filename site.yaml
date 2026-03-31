@@ -1,0 +1,503 @@
+---
+- name: Setup DevOps Server
+  hosts: devops
+  become: true
+
+  vars_files:
+    - vars/vars.yaml
+    - vars/secrets.yaml
+
+  tasks:
+
+    # -----------------------------
+    # Swap (Amazon Linux): mindestens swap_size_gb, sonst Swap-Datei anlegen
+    # -----------------------------
+    - name: Swap auf Amazon Linux absichern (>= swap_size_gb aus vars)
+      when: "'Amazon' in ansible_distribution"
+      block:
+        - name: Aktuellen SwapTotal (KiB laut /proc/meminfo) lesen
+          ansible.builtin.shell: awk '/^SwapTotal:/ {print $2}' /proc/meminfo
+          args:
+            executable: /bin/bash
+          register: swap_total_kb_cmd
+          changed_when: false
+
+        - name: Benötigtes Swap-Minimum in KiB ableiten
+          ansible.builtin.set_fact:
+            swap_required_kb: "{{ swap_size_gb | int * 1024 * 1024 }}"
+
+        - name: Prüfen ob konfigurierte Swap-Datei bereits in /proc/swaps steht
+          ansible.builtin.command: grep -qF "{{ swap_file_path }}" /proc/swaps
+          register: swapfile_active_check
+          changed_when: false
+          failed_when: false
+
+        - name: Konfigurierte Swap-Datei deaktivieren (vor Neuanlage/Resize)
+          ansible.builtin.command: swapoff "{{ swap_file_path }}"
+          when:
+            - (swap_total_kb_cmd.stdout | int) < (swap_required_kb | int)
+            - swapfile_active_check.rc == 0
+          failed_when: false
+
+        - name: Alte Swap-Datei entfernen wenn Gesamt-Swap unter dem Minimum liegt
+          ansible.builtin.file:
+            path: "{{ swap_file_path }}"
+            state: absent
+          when: (swap_total_kb_cmd.stdout | int) < (swap_required_kb | int)
+
+        - name: Swap-Datei anlegen (fallocate)
+          ansible.builtin.command: fallocate -l {{ swap_size_gb }}G "{{ swap_file_path }}"
+          when: (swap_total_kb_cmd.stdout | int) < (swap_required_kb | int)
+          register: swap_fallocate
+          changed_when: swap_fallocate.rc == 0
+
+        - name: Swap-Datei nur für root lesbar
+          ansible.builtin.file:
+            path: "{{ swap_file_path }}"
+            owner: root
+            group: root
+            mode: "0600"
+          when: (swap_total_kb_cmd.stdout | int) < (swap_required_kb | int)
+
+        - name: Swap-Bereich initialisieren (mkswap)
+          ansible.builtin.command: mkswap "{{ swap_file_path }}"
+          when: (swap_total_kb_cmd.stdout | int) < (swap_required_kb | int)
+          register: swap_mkswap
+          changed_when: "'Setting up swapspace' in (swap_mkswap.stderr | default(''))"
+
+        - name: Swap-Datei aktivieren (swapon)
+          ansible.builtin.command: swapon "{{ swap_file_path }}"
+          when: (swap_total_kb_cmd.stdout | int) < (swap_required_kb | int)
+          register: swap_swapon
+          changed_when: swap_swapon.rc == 0
+
+        - name: Swap-Datei in /etc/fstab persistieren
+          ansible.builtin.lineinfile:
+            path: /etc/fstab
+            regexp: '^{{ swap_file_path | regex_escape }}\s'
+            line: "{{ swap_file_path }} none swap sw 0 0"
+            state: present
+          when: (swap_total_kb_cmd.stdout | int) < (swap_required_kb | int)
+
+    # -----------------------------
+    # 1️⃣ Python 3.11 installieren
+    # -----------------------------
+    # Für Jenkinsfile: python3.11 -m venv + pip install. Auf EL/Fedora liefert das
+    # Basis-RPM oft kein ensurepip; ohne python3.11-pip schlägt venv/pip fehl.
+    # -devel + gcc: Wheels mit C-Extensions bauen (pip install -e ".[dev]").
+    - name: Install Python 3.11
+      ansible.builtin.dnf:
+        name:
+          - python3.11
+          - python3.11-pip
+          - python3.11-devel
+          - gcc
+        state: present
+
+    # -----------------------------
+    # 2️⃣ Docker installieren
+    # -----------------------------
+    - name: Install Docker
+      ansible.builtin.dnf:
+        name: docker
+        state: present
+
+    - name: Start and enable Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add Jenkins user to docker group
+      ansible.builtin.user:
+        name: jenkins
+        groups: docker
+        append: true
+
+    # -----------------------------
+    # 3️⃣ Docker Compose installieren
+    # -----------------------------
+
+    - name: Prüfen, ob Docker Compose bereits installiert ist
+      ansible.builtin.command: command -v docker-compose
+      register: compose_check
+      ignore_errors: true
+      changed_when: false
+      tags:
+        - docker-compose
+
+    - name: Docker Compose herunterladen und installieren
+      ansible.builtin.get_url:
+        url: "https://github.com/docker/compose/releases/download/v5.1.1/docker-compose-linux-x86_64"
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+      when: compose_check.rc != 0
+      tags:
+        - docker-compose
+
+    - name: Symbolischen Link erstellen (falls noch nicht vorhanden)
+      ansible.builtin.file:
+        src: /usr/local/bin/docker-compose
+        dest: /usr/bin/docker-compose
+        state: link
+      when: compose_check.rc != 0
+      tags:
+        - docker-compose
+
+    # -----------------------------
+    # 3️⃣ MongoDB installieren
+    # -----------------------------
+    - name: MongoDB Repository hinzufügen
+      ansible.builtin.yum_repository:
+        name: mongodb-org-8.2
+        description: MongoDB Repository
+        baseurl: https://repo.mongodb.org/yum/redhat/9/mongodb-org/8.2/x86_64/
+        gpgcheck: true
+        enabled: true
+        gpgkey: https://pgp.mongodb.com/server-8.0.asc
+
+    - name: MongoDB Pakete installieren
+      ansible.builtin.dnf:
+        name: mongodb-org
+        state: present
+        update_cache: true
+
+    # -----------------------------
+    # 4️⃣ Jenkins installieren
+    # -----------------------------
+
+
+    - name: Install Amazon Corretto 21 (OpenJDK)
+      ansible.builtin.dnf:
+        name: java-21-amazon-corretto-headless
+        state: present
+
+    - name: Install Fontconfig
+      ansible.builtin.dnf:
+        name: fontconfig
+        state: present
+
+
+    - name: Add Jenkins repository
+      ansible.builtin.yum_repository:
+        name: jenkins
+        description: Jenkins Repo
+        baseurl: https://pkg.jenkins.io/redhat-stable/
+        gpgcheck: true
+        gpgkey: https://pkg.jenkins.io/rpm-stable/repodata/repomd.xml.key
+        enabled: true
+
+    - name: Install Jenkins
+      ansible.builtin.dnf:
+        name: jenkins
+        state: present
+
+    - name: Create Jenkins TMPDIR
+      ansible.builtin.file:
+        path: "{{ jenkins_tmp_dir }}"
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: '0755'
+
+    - name: Update Jenkins Service Config
+      ansible.builtin.lineinfile:
+        path: /usr/lib/systemd/system/jenkins.service
+        regexp: '^Environment="JAVA_OPTS'
+        line: 'Environment="JAVA_OPTS=-Djava.awt.headless=true -Djava.io.tmpdir={{ jenkins_tmp_dir }} -Djenkins.install.runSetupWizard=false"'
+      tags:
+        - jenkins-config
+
+    - name: Copy CASC-Configuration for Jenkins
+      ansible.builtin.copy:
+        src: "{{ jenkins_casc_src }}"
+        dest: "{{ jenkins_casc_dest }}"
+        owner: jenkins
+        group: jenkins
+        mode: '0664'
+      tags:
+        - jenkins-config
+
+    - name: Set JENKINS_ADMIN_PASSWORD environment variable system-wide (Linux)
+      ansible.builtin.lineinfile:
+        path: /etc/environment
+        regexp: '^JENKINS_ADMIN_PASSWORD='
+        line: "JENKINS_ADMIN_PASSWORD={{ jenkins_admin_password }}"
+      tags:
+        - jenkins-config
+
+
+    - name: Set JENKINS_BASE_URL environment variable system-wide (Linux)
+      ansible.builtin.lineinfile:
+        path: /etc/environment
+        regexp: '^JENKINS_BASE_URL='
+        line: "JENKINS_BASE_URL={{ jenkins_url }}"
+
+      tags:
+        - jenkins-config
+
+    - name: Set JENKINS_ADMIN_MAIL environment variable system-wide (Linux)
+      ansible.builtin.lineinfile:
+        path: /etc/environment
+        regexp: '^JENKINS_ADMIN_MAIL='
+        line: "JENKINS_ADMIN_MAIL={{ jenkins_admin_mail }}"
+      tags:
+        - jenkins-config
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      tags:
+        - jenkins-config
+
+    - name: Start and enable Jenkins
+      ansible.builtin.systemd:
+        name: jenkins
+        state: restarted
+        enabled: true
+      tags:
+        - jenkins-config
+
+
+    # -----------------------------
+    # 5️⃣ SSL-Zertifikate übertragen
+    # -----------------------------
+    - name: Create SSL CERTDIR
+      ansible.builtin.file:
+        path: "{{ ssl_cert_dir }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: '0755'
+
+    - name: Copy SSL certificate
+      ansible.builtin.copy:
+        src: "{{ ssl_cert_src }}"
+        dest: "{{ ssl_cert_dest }}"
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
+
+    - name: Copy SSL private key
+      ansible.builtin.copy:
+        src: "{{ ssl_key_src }}"
+        dest: "{{ ssl_key_dest }}"
+        owner: ec2-user
+        group: ec2-user
+        mode: '0600'
+
+    # -----------------------------
+    # 5️⃣ Nginx installieren und konfigurieren
+    # -----------------------------
+    - name: Install Nginx
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+
+    - name: Create Nginx site for Jenkins
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/jenkins.conf
+        content: |
+          server {
+              listen 443 ssl;
+              server_name {{ nginx_server_name }};
+
+              ssl_certificate {{ ssl_cert_dest }};
+              ssl_certificate_key {{ ssl_key_dest }};
+
+              location / {
+                  proxy_pass http://localhost:{{ jenkins_http_port }};
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Ensure Nginx is running
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    # -----------------------------
+    # 8️⃣ No-IP2 installieren & konfigurieren
+    # -----------------------------
+    - name: Install spal Release
+      ansible.builtin.dnf:
+        name: spal-release
+        state: present
+
+    - name: Install noip2
+      ansible.builtin.dnf:
+        name: noip
+        state: present
+
+    - name: Copy No-IP2 configuration
+      ansible.builtin.copy:
+        src: "{{ noip_config_src }}"
+        dest: "{{ noip_config_dest }}"
+        owner: ec2-user
+        group: ec2-user
+        mode: '0600'
+
+    - name: Copy No-IP2 systemd service
+      ansible.builtin.copy:
+        src: "{{ noip_service_src }}"
+        dest: "{{ noip_service_dest }}"
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
+
+    - name: Reload systemd for No-IP2 service
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Enable and start No-IP2 service
+      ansible.builtin.systemd:
+        name: noip
+        state: started
+        enabled: true
+
+    # -----------------------------
+    # 6️⃣ Jenkins Plugins installieren
+    # -----------------------------
+
+
+    - name: Install python3-pip via dnf
+      ansible.builtin.dnf:
+        name: python3-pip
+        state: present
+
+    - name: Install python-jenkins on Remote server
+      ansible.builtin.pip:
+        name: python-jenkins
+        state: present
+
+
+    - name: Install plugins
+      community.general.jenkins_plugin:
+        name: "{{ item }}"
+        state: present
+        url: "http://127.0.0.1:{{ jenkins_http_port }}/"
+      loop:
+        - configuration-as-code
+        - credentials
+        - matrix-auth
+        - job-dsl
+        - git
+        - workflow-aggregator
+        - credentials-binding
+        # options { timestamps() } im Jenkinsfile (Declarative)
+        - timestamper
+      tags:
+        - install-plugins-only
+
+    - name: Restart Jenkins via systemd
+      ansible.builtin.systemd:
+        name: jenkins
+        state: restarted
+        enabled: true
+      tags:
+        - jenkins-config
+
+    - name: Warten bis Jenkins HTTP (localhost) bereit ist
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ jenkins_http_port }}"
+        delay: 5
+        timeout: 180
+      tags:
+        - install-plugins-only
+        - jenkins-config
+        - jenkins-credentials
+
+    - name: Jenkins API-Token erzeugen (einmaliges Secret — nur mit Admin-Passwort)
+      community.general.jenkins_credential:
+        type: token
+        name: "{{ jenkins_ansible_token_name }}"
+        jenkins_user: "{{ jenkins_admin_user }}"
+        jenkins_password: "{{ jenkins_admin_password }}"
+        url: "{{ jenkins_api_base }}"
+      register: _jenkins_api_token_result
+      when: (jenkins_api_token | default('', true) | length) == 0
+      tags:
+        - install-plugins-only
+        - jenkins-config
+        - jenkins-credentials
+
+    - name: Effektives API-Token für REST-Aufrufe (Token statt Passwort)
+      ansible.builtin.set_fact:
+        jenkins_rest_api_token: "{{ jenkins_api_token if (jenkins_api_token | default('', true) | length) > 0 else _jenkins_api_token_result.token }}"
+      no_log: true
+      tags:
+        - install-plugins-only
+        - jenkins-config
+        - jenkins-credentials
+
+    - name: Jenkins-Credential GitHub (Username/Passwort)
+      community.general.jenkins_credential:
+        id: "{{ jenkins_cred_github_id }}"
+        type: user_and_pass
+        description: Github Username and Password
+        username: "{{ jenkins_cred_github_username }}"
+        password: "{{ jenkins_cred_github_password }}"
+        jenkins_user: "{{ jenkins_admin_user }}"
+        token: "{{ jenkins_rest_api_token }}"
+        url: "{{ jenkins_api_base }}"
+      no_log: true
+      tags:
+        - jenkins-config
+        - jenkins-credentials
+
+    - name: Jenkins-Credential Docker Hub (Username/Passwort)
+      community.general.jenkins_credential:
+        id: "{{ jenkins_cred_dockerhub_id }}"
+        type: user_and_pass
+        description: Docker Hub username/password for push
+        username: "{{ jenkins_cred_dockerhub_username }}"
+        password: "{{ jenkins_cred_dockerhub_password }}"
+        jenkins_user: "{{ jenkins_admin_user }}"
+        token: "{{ jenkins_rest_api_token }}"
+        url: "{{ jenkins_api_base }}"
+      no_log: true
+      tags:
+        - jenkins-config
+        - jenkins-credentials
+
+    - name: Jenkins-Credential OpenAI (Secret Text)
+      community.general.jenkins_credential:
+        id: "{{ jenkins_cred_openai_id }}"
+        type: text
+        description: OpenAI API key
+        secret: "{{ jenkins_cred_openai_secret }}"
+        jenkins_user: "{{ jenkins_admin_user }}"
+        token: "{{ jenkins_rest_api_token }}"
+        url: "{{ jenkins_api_base }}"
+      no_log: true
+      tags:
+        - jenkins-config
+        - jenkins-credentials
+
+    - name: Jenkins-Credential MongoDB (Username/Passwort)
+      community.general.jenkins_credential:
+        id: "{{ jenkins_cred_mongodb_id }}"
+        type: user_and_pass
+        description: MongoDB credentials used by docker-compose / pipeline
+        username: "{{ jenkins_cred_mongodb_username }}"
+        password: "{{ jenkins_cred_mongodb_password }}"
+        jenkins_user: "{{ jenkins_admin_user }}"
+        token: "{{ jenkins_rest_api_token }}"
+        url: "{{ jenkins_api_base }}"
+      no_log: true
+      tags:
+        - jenkins-config
+        - jenkins-credentials
+
+    - name: Install git on Node
+      ansible.builtin.dnf:
+        name: git
+        state: present

@@ -1,0 +1,67 @@
+jenkins:
+  systemMessage: "Minimal Jenkins - Test JCasc"
+  # Pipelines brauchen einen freien Executor. 0 = nur noch mit separaten Agents bauen;
+  # sonst bleiben Jobs nach dem Branch-Indexing dauerhaft in der Queue.
+  numExecutors: 1
+  mode: "NORMAL"
+
+  # Benutzer für Anmeldung
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: ${JENKINS_ADMIN_PASSWORD}
+  
+  authorizationStrategy:
+    globalMatrix:
+      entries:
+      - user:
+          name: "admin"
+          permissions:
+            - "Overall/Administer"
+      - group:
+          name: "Authenticated"
+          permissions:
+            - "Overall/Read"
+
+# Globale Jenkins-Credentials werden per Ansible (community.general.jenkins_credential) gesetzt.
+
+unclassified:
+  location:
+    url: ${JENKINS_BASE_URL}
+    adminAddress: ${JENKINS_ADMIN_MAIL}
+
+# Job DSL — Minimaltest für Multibranch (ohne Folder-Pfad).
+# Wenn das scheitert, fehlen typisch: workflow-multibranch, branch-api, git, workflow-job,
+# workflow-cps, job-dsl, configuration-as-code-job-dsl.
+# Läuft das: Schritt 2 = wieder folder('applications') + Job-Name 'applications/DFlowP'.
+jobs:
+  - script: |
+      multibranchPipelineJob('DFlowP-mb-minimal') {
+        branchSources {
+          git {
+            id('minimal-git-source')
+            remote('https://github.com/mjairuobe/DFlowP.git')
+            credentialsId('github')
+            includes('*')
+          }
+        }
+        orphanedItemStrategy {
+          defaultOrphanedItemStrategy {
+            pruneDeadBranches(true)
+            daysToKeepStr('7')
+            numToKeepStr('10')
+          }
+        }
+        factory {
+          workflowBranchProjectFactory {
+            scriptPath('Jenkinsfile')
+          }
+        }
+        triggers {
+          periodicFolderTrigger {
+            interval('5m')
+          }
+        }
+      }

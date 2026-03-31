@@ -1,0 +1,13 @@
+[Unit]
+Description=No-IP Dynamic DNS Update Client
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/sbin/noip2 -c /etc/no-ip2.conf
+ExecStop=/usr/sbin/noip2 -K
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target

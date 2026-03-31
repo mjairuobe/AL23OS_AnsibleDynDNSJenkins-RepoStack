@@ -1,0 +1,4 @@
+**/secrets.yaml
+**/*.pem
+**/no-ip2.conf
+**/vars.yaml
