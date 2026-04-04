@@ -196,6 +196,18 @@
       tags:
         - jenkins-config
 
+    # copy createinitial.groovy to /var/lib/jenkins/init.groovy.d/
+    - name: Copy createinitial.groovy to /var/lib/jenkins/init.groovy.d/
+      ansible.builtin.copy:
+        src: "{{ jenkins_createinitial_groovy_src }}"
+        dest: "{{ jenkins_createinitial_groovy_dest }}"
+        owner: jenkins
+        group: jenkins
+        mode: '0664'
+      tags:
+        - jenkins-config
+
+
     # copy security.groovy to /var/lib/jenkins/init.groovy.d/
     - name: Copy security.groovy to /var/lib/jenkins/init.groovy.d/
       ansible.builtin.copy:
@@ -207,18 +219,18 @@
       tags:
         - jenkins-config
 
-    - name: Replace SCRIPT_PUTS_JENKINS_ADMIN_USER variable in jenkins_casc_dest
+    - name: Replace SCRIPT_PUTS_JENKINS_ADMIN_USER variable in createinitial.groovy
       ansible.builtin.replace:
-        path: "{{ jenkins_casc_dest }}"
-        regexp: 'SCRIPT_PUTS_JENKINS_PRODUCTION_ADMIN_USER'
-        replace: "{{ jenkins_production_admin_user }}"
+        path: "{{ jenkins_createinitial_groovy_dest }}"
+        regexp: 'SCRIPT_PUTS_JENKINS_ADMIN_USER'
+        replace: "{{ jenkins_admin_user }}"
       tags:
         - jenkins-config
 
-    # # replace JENKINS_ADMIN_PASSWORD variable in jenkins_casc_dest
-    - name: Replace JENKINS_ADMIN_PASSWORD variable in jenkins_casc_dest
+    # # replace JENKINS_ADMIN_PASSWORD variable in createinitial.groovy
+    - name: Replace JENKINS_ADMIN_PASSWORD variable in createinitial.groovy
       ansible.builtin.replace:
-        path: "{{ jenkins_casc_dest }}"
+        path: "{{ jenkins_createinitial_groovy_dest }}"
         regexp: 'SCRIPT_PUTS_JENKINS_ADMIN_PASSWORD'
         replace: "{{ jenkins_admin_password }}"
       tags:
@@ -578,3 +590,13 @@
         - jenkins-config
         - jenkins-credentials
         - delete-initialAdmin
+
+  # delete createinitial.groovy from /var/lib/jenkins/init.groovy.d/
+    - name: Delete createinitial.groovy from /var/lib/jenkins/init.groovy.d/
+      ansible.builtin.file:
+        path: "{{ jenkins_createinitial_groovy_dest }}"
+        state: absent
+      tags:
+        - jenkins-config
+        - jenkins-credentials
+        - delete-initiaAdmin

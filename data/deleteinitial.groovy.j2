@@ -1,36 +1,17 @@
-// Bootstrap-User aus JCasC entfernen: Matrix-Einträge + hudson.model.User — nur wenn ein
-// anderer Account bereits Overall/Administer hat (Lockout-Schutz).
+// Minimal: alle Matrix-Einträge mit SID "initialAdmin" entfernen + User löschen.
 import jenkins.model.*
 import hudson.security.GlobalMatrixAuthorizationStrategy
 import hudson.model.User
 
 def jenkins = Jenkins.getInstance()
-def bootstrapId = 'initialAdmin'
+def id = 'initialAdmin'
 
 def strat = jenkins.getAuthorizationStrategy()
-if (!(strat instanceof GlobalMatrixAuthorizationStrategy)) {
-    return
-}
-
-def granted = strat.getGrantedPermissions()
-def adminSids = granted?.get(Jenkins.ADMINISTER) as Set ?: ([] as Set)
-if (adminSids.findAll { it != bootstrapId }.isEmpty()) {
-    return
-}
-
-try {
-    if (granted != null) {
-        def permsToStrip = granted
-            .findAll { perm, sids -> sids != null && sids.contains(bootstrapId) }
-            .collect { it.key }
-        permsToStrip.each { perm -> strat.remove(perm, bootstrapId) }
+if (strat instanceof GlobalMatrixAuthorizationStrategy) {
+    strat.getGrantedPermissionEntries().each { perm, entries ->
+        entries?.removeAll { it.getSid() == id }
     }
-} catch (Throwable ignored) {
-    strat.remove(Jenkins.ADMINISTER, bootstrapId)
 }
 
-def legacyUser = User.getById(bootstrapId, false)
-if (legacyUser != null) {
-    legacyUser.delete()
-}
+User.getById(id, false)?.delete()
 jenkins.save()

@@ -1,0 +1,19 @@
+import jenkins.model.*
+import hudson.util.Secret
+import hudson.security.ACL
+import hudson.security.HudsonPrivateSecurityRealm
+import hudson.security.GlobalMatrixAuthorizationStrategy
+import hudson.model.User
+import com.cloudbees.plugins.credentials.CredentialsProvider
+import com.cloudbees.plugins.credentials.common.StandardUsernamePasswordCredentials
+
+def jenkins = Jenkins.getInstance()
+
+def realm = jenkins.getSecurityRealm()
+def user = realm.createAccount("SCRIPT_PUTS_JENKINS_ADMIN_USER", "SCRIPT_PUTS_JENKINS_ADMIN_PASSWORD")
+user.save()
+jenkins.getAuthorizationStrategy().add(
+Jenkins.ADMINISTER,
+org.jenkinsci.plugins.matrixauth.PermissionEntry.user("SCRIPT_PUTS_JENKINS_ADMIN_USER")
+)
+jenkins.save()
