@@ -1,0 +1,29 @@
+import jenkins.model.*
+import hudson.util.Secret
+import hudson.security.ACL
+import hudson.security.HudsonPrivateSecurityRealm
+import hudson.security.GlobalMatrixAuthorizationStrategy
+import hudson.model.User
+import com.cloudbees.plugins.credentials.CredentialsProvider
+import com.cloudbees.plugins.credentials.common.StandardUsernamePasswordCredentials
+
+def jenkins = Jenkins.getInstance()
+
+def credentials = CredentialsProvider.lookupCredentials(
+    StandardUsernamePasswordCredentials.class,
+    jenkins,
+    ACL.SYSTEM
+)
+
+credentials.each { cred ->
+    if (cred instanceof io.jenkins.plugins.credentials.secretsmanager.factory.username_password.AwsUsernamePasswordCredentials) {
+        def realm = jenkins.getSecurityRealm()
+        def user = realm.createAccount(cred.username, Secret.toString(cred.password))
+        user.save()
+        jenkins.getAuthorizationStrategy().add(
+    Jenkins.ADMINISTER,
+    org.jenkinsci.plugins.matrixauth.PermissionEntry.user(cred.username)
+)
+        jenkins.save()
+    }
+}

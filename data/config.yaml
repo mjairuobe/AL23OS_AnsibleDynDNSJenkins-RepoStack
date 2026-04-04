@@ -10,14 +10,14 @@ jenkins:
     local:
       allowsSignup: false
       users:
-        - id: "admin"
-          password: "${JENKINS_ADMIN_PASSWORD}"
+        - id: "initialAdmin"
+          password: "SCRIPT_PUTS_JENKINS_ADMIN_PASSWORD" # this initialAdmin Account will deleted by security.groovy after new Admin Account was created from AWS Secrets
   
   authorizationStrategy:
     globalMatrix:
       entries:
       - user:
-          name: "admin"
+          name: "initialAdmin"
           permissions:
             - "Overall/Administer"
       - group:
@@ -29,8 +29,10 @@ jenkins:
 
 unclassified:
   location:
-    url: "${JENKINS_BASE_URL}"
-    adminAddress: "${JENKINS_ADMIN_MAIL}"
+    url: "SCRIPT_PUTS_JENKINS_URL"
+    adminAddress: "SCRIPT_PUTS_JENKINS_ADMIN_MAIL"
+  awsCredentialsProvider:
+    cache: false                 # for fetching aws credentials from secrets manager immediately
 
 # Job DSL — Minimaltest für Multibranch (ohne Folder-Pfad).
 # Wenn das scheitert, fehlen typisch: workflow-multibranch, branch-api, git, workflow-job,

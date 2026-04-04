@@ -185,29 +185,60 @@
       tags:
         - jenkins-config
 
-    - name: Set JENKINS_ADMIN_PASSWORD environment variable system-wide (Linux)
-      ansible.builtin.lineinfile:
-        path: /etc/environment
-        regexp: '^JENKINS_ADMIN_PASSWORD='
-        line: "JENKINS_ADMIN_PASSWORD={{ jenkins_admin_password }}"
+# create directory /var/lib/jenkins/init.groovy.d/ if not exists
+    - name: Create directory /var/lib/jenkins/init.groovy.d/ if not exists
+      ansible.builtin.file:
+        path: "{{ jenkins_init_groovy_dir }}"
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: '0755'
       tags:
         - jenkins-config
 
-
-    - name: Set JENKINS_BASE_URL environment variable system-wide (Linux)
-      ansible.builtin.lineinfile:
-        path: /etc/environment
-        regexp: '^JENKINS_BASE_URL='
-        line: "JENKINS_BASE_URL={{ jenkins_url }}"
-
+    # copy security.groovy to /var/lib/jenkins/init.groovy.d/
+    - name: Copy security.groovy to /var/lib/jenkins/init.groovy.d/
+      ansible.builtin.copy:
+        src: "{{ jenkins_security_groovy_src }}"
+        dest: "{{ jenkins_security_groovy_dest }}"
+        owner: jenkins
+        group: jenkins
+        mode: '0664'
       tags:
         - jenkins-config
 
-    - name: Set JENKINS_ADMIN_MAIL environment variable system-wide (Linux)
-      ansible.builtin.lineinfile:
-        path: /etc/environment
-        regexp: '^JENKINS_ADMIN_MAIL='
-        line: "JENKINS_ADMIN_MAIL={{ jenkins_admin_mail }}"
+    - name: Replace SCRIPT_PUTS_JENKINS_ADMIN_USER variable in jenkins_casc_dest
+      ansible.builtin.replace:
+        path: "{{ jenkins_casc_dest }}"
+        regexp: 'SCRIPT_PUTS_JENKINS_PRODUCTION_ADMIN_USER'
+        replace: "{{ jenkins_production_admin_user }}"
+      tags:
+        - jenkins-config
+
+    # # replace JENKINS_ADMIN_PASSWORD variable in jenkins_casc_dest
+    - name: Replace JENKINS_ADMIN_PASSWORD variable in jenkins_casc_dest
+      ansible.builtin.replace:
+        path: "{{ jenkins_casc_dest }}"
+        regexp: 'SCRIPT_PUTS_JENKINS_ADMIN_PASSWORD'
+        replace: "{{ jenkins_admin_password }}"
+      tags:
+        - jenkins-config
+
+    # # replace JENKINS_BASE_URL variable in jenkins_casc_dest
+    - name: Replace JENKINS_BASE_URL variable in jenkins_casc_dest
+      ansible.builtin.replace:
+        path: "{{ jenkins_casc_dest }}"
+        regexp: 'SCRIPT_PUTS_JENKINS_URL'
+        replace: "{{ jenkins_url }}"
+      tags:
+        - jenkins-config
+
+  # # replace JENKINS_ADMIN_MAIL variable in jenkins_casc_dest  
+    - name: Replace JENKINS_ADMIN_MAIL variable in jenkins_casc_dest
+      ansible.builtin.replace:
+        path: "{{ jenkins_casc_dest }}"
+        regexp: 'SCRIPT_PUTS_JENKINS_ADMIN_MAIL'
+        replace: "{{ jenkins_admin_mail }}"
       tags:
         - jenkins-config
 
@@ -256,39 +287,7 @@
     # -----------------------------
     # 5️⃣ Nginx installieren und konfigurieren
     # -----------------------------
-    - name: Install Nginx
-      ansible.builtin.dnf:
-        name: nginx
-        state: present
-
-    - name: Create Nginx site for Jenkins
-      ansible.builtin.copy:
-        dest: /etc/nginx/conf.d/jenkins.conf
-        content: |
-          server {
-              listen 443 ssl;
-              server_name {{ nginx_server_name }};
-
-              ssl_certificate {{ ssl_cert_dest }};
-              ssl_certificate_key {{ ssl_key_dest }};
-
-              location / {
-                  proxy_pass http://localhost:{{ jenkins_http_port }};
-                  proxy_set_header Host $host;
-                  proxy_set_header X-Real-IP $remote_addr;
-                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                  proxy_set_header X-Forwarded-Proto $scheme;
-              }
-          }
-        owner: root
-        group: root
-        mode: "0644"
-
-    - name: Ensure Nginx is running
-      ansible.builtin.systemd:
-        name: nginx
-        state: started
-        enabled: true
+   
 
     # -----------------------------
     # 8️⃣ No-IP2 installieren & konfigurieren
@@ -345,10 +344,10 @@
         state: present
 
 
-    - name: Install plugins
+    - name: Install plugins (only if authorization is not required)
       community.general.jenkins_plugin:
         name: "{{ item }}"
-        state: present
+        state: present 
         url: "http://127.0.0.1:{{ jenkins_http_port }}/"
       loop:
         - configuration-as-code
@@ -360,8 +359,106 @@
         - credentials-binding
         # options { timestamps() } im Jenkinsfile (Declarative)
         - timestamper
+        - aws-secrets-manager-credentials-provider
+      register: plugin_result
+      failed_when: false
       tags:
         - install-plugins-only
+      
+
+    - name: Detect 403-like failure
+      set_fact:
+        jenkins_forbidden: "{{ '403' in (plugin_result.msg | default('')) }}"
+      tags:
+        - install-plugins-only
+
+    - name: Install Nginx
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+      tags:
+        - nginx-config
+        - jenkins-config
+
+    - name: Create Nginx site for Jenkins
+      ansible.builtin.copy:
+        dest: /etc/nginx/conf.d/jenkins.conf
+        content: |
+          server {
+              listen 443 ssl;
+              server_name {{ nginx_server_name }};
+
+              ssl_certificate {{ ssl_cert_dest }};
+              ssl_certificate_key {{ ssl_key_dest }};
+
+              location / {
+                  proxy_pass http://localhost:{{ jenkins_http_port }};
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+        owner: root
+        group: root
+        mode: "0644"  
+      tags:
+        - nginx-config
+        - jenkins-config
+
+    - name: Ensure Nginx is running
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+      tags:
+        - nginx-config
+        - jenkins-config
+
+
+    # Jenkins API-Token erzeugen (einmaliges Secret — nur mit Admin-Passwort)
+    - name: Jenkins API-Token erzeugen (einmaliges Secret — nur mit Admin-Passwort)
+      community.general.jenkins_credential:
+        type: token
+        name: "{{ jenkins_ansible_token_name }}"
+        jenkins_user: "{{ jenkins_admin_user }}"
+        jenkins_password: "{{ jenkins_admin_password }}"
+        url: "{{ jenkins_api_base }}"
+      register: _jenkins_api_token_result
+      when: jenkins_forbidden and (jenkins_api_token | default('', true) | length) == 0
+      tags:
+        - install-plugins-only
+
+    - name: Effektives API-Token für REST-Aufrufe (Token statt Passwort)
+      ansible.builtin.set_fact:
+        jenkins_rest_api_token: "{{ jenkins_api_token if (jenkins_api_token | default('', true) | length) > 0 else _jenkins_api_token_result.token }}"
+      no_log: true
+      tags:
+        - install-plugins-only
+      when: jenkins_forbidden | default(false) | bool
+
+
+    - name: Install plugins (only if authorization is required)
+      community.general.jenkins_plugin:
+        name: "{{ item }}"
+        state: present 
+        url: "http://127.0.0.1:{{ jenkins_http_port }}/"
+        jenkins_user: "{{ jenkins_admin_user }}"
+        token: "{{ jenkins_rest_api_token }}"
+      loop:
+        - configuration-as-code
+        - credentials
+        - matrix-auth
+        - job-dsl
+        - git
+        - workflow-aggregator
+        - credentials-binding
+        # options { timestamps() } im Jenkinsfile (Declarative)
+        - timestamper
+        - aws-secrets-manager-credentials-provider
+      tags:
+        - install-plugins-only
+      when: jenkins_forbidden | default(false) | bool
 
     - name: Restart Jenkins via systemd
       ansible.builtin.systemd:
@@ -370,6 +467,7 @@
         enabled: true
       tags:
         - jenkins-config
+        - install-plugins-only
 
     - name: Warten bis Jenkins HTTP (localhost) bereit ist
       ansible.builtin.wait_for:
@@ -382,7 +480,7 @@
         - jenkins-config
         - jenkins-credentials
 
-    - name: Jenkins API-Token erzeugen (einmaliges Secret — nur mit Admin-Passwort)
+    - name: Jenkins API-Token für CRED hinterlegen erzeugen
       community.general.jenkins_credential:
         type: token
         name: "{{ jenkins_ansible_token_name }}"
@@ -468,3 +566,15 @@
       ansible.builtin.dnf:
         name: git
         state: present
+
+  ## groovy skript deleteinitialAdmin-account.groovy per ansible auf jenins ausführen
+    - name: Execute Groovy script on Jenkins
+      community.general.jenkins_script:
+        user: "{{ jenkins_admin_user }}"
+        password: "{{ jenkins_admin_password }}"
+        url: "{{ jenkins_api_base }}"
+        script: "{{ lookup('ansible.builtin.file', 'data/deleteinitial.groovy.j2') }}"
+      tags:
+        - jenkins-config
+        - jenkins-credentials
+        - delete-initialAdmin
