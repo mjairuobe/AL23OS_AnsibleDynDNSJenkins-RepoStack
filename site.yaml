@@ -102,7 +102,7 @@
     # -----------------------------
     # 3️⃣ Docker Compose installieren
     # -----------------------------
-
+    
     - name: Prüfen, ob Docker Compose bereits installiert ist
       ansible.builtin.command: command -v docker-compose
       register: compose_check
@@ -245,7 +245,7 @@
       tags:
         - jenkins-config
 
-  # replace JENKINS_ADMIN_MAIL variable in jenkins_casc_dest  
+  # replace JENKINS_ADMIN_MAIL variable in jenkins_casc_dest
     - name: Replace JENKINS_ADMIN_MAIL variable in jenkins_casc_dest
       ansible.builtin.replace:
         path: "{{ jenkins_casc_dest }}"
@@ -345,18 +345,18 @@
     # -----------------------------
 
 
-    - name: Install python3-pip via dnf
+    - name: Install python3-pip
       ansible.builtin.dnf:
         name: python3-pip
         state: present
 
-    - name: Install python-jenkins on Remote server
+    - name: Install python-jenkins
       ansible.builtin.pip:
         name: python-jenkins
         state: present
 
 
-    - name: Install plugins (only if authorization is not required)
+    - name: Install plugins
       community.general.jenkins_plugin:
         name: "{{ item }}"
         state: present
@@ -372,18 +372,9 @@
         # options { timestamps() } im Jenkinsfile (Declarative)
         - timestamper
         - aws-secrets-manager-credentials-provider
-      register: plugin_result
-      failed_when: false
       tags:
         - install-plugins-only
       
-
-    - name: Detect 403-like failure
-      ansible.builtin.set_fact:
-        jenkins_forbidden: "{{ '403' in (plugin_result.msg | default('')) }}"
-      tags:
-        - install-plugins-only
-
     - name: Install Nginx
       ansible.builtin.dnf:
         name: nginx
@@ -426,7 +417,7 @@
       tags:
         - nginx-config
         - jenkins-config
-        
+
     - name: Warten bis Jenkins (WWW) bereit ist
       ansible.builtin.wait_for:
         host: "{{ jenkins_api_base }}"
