@@ -227,7 +227,7 @@
       tags:
         - jenkins-config
 
-    # # replace JENKINS_ADMIN_PASSWORD variable in createinitial.groovy
+    # replace JENKINS_ADMIN_PASSWORD variable in createinitial.groovy
     - name: Replace JENKINS_ADMIN_PASSWORD variable in createinitial.groovy
       ansible.builtin.replace:
         path: "{{ jenkins_createinitial_groovy_dest }}"
@@ -236,7 +236,7 @@
       tags:
         - jenkins-config
 
-    # # replace JENKINS_BASE_URL variable in jenkins_casc_dest
+    # replace JENKINS_BASE_URL variable in jenkins_casc_dest
     - name: Replace JENKINS_BASE_URL variable in jenkins_casc_dest
       ansible.builtin.replace:
         path: "{{ jenkins_casc_dest }}"
@@ -245,7 +245,7 @@
       tags:
         - jenkins-config
 
-  # # replace JENKINS_ADMIN_MAIL variable in jenkins_casc_dest  
+  # replace JENKINS_ADMIN_MAIL variable in jenkins_casc_dest  
     - name: Replace JENKINS_ADMIN_MAIL variable in jenkins_casc_dest
       ansible.builtin.replace:
         path: "{{ jenkins_casc_dest }}"
@@ -359,7 +359,7 @@
     - name: Install plugins (only if authorization is not required)
       community.general.jenkins_plugin:
         name: "{{ item }}"
-        state: present 
+        state: present
         url: "http://127.0.0.1:{{ jenkins_http_port }}/"
       loop:
         - configuration-as-code
@@ -379,7 +379,7 @@
       
 
     - name: Detect 403-like failure
-      set_fact:
+      ansible.builtin.set_fact:
         jenkins_forbidden: "{{ '403' in (plugin_result.msg | default('')) }}"
       tags:
         - install-plugins-only
@@ -413,7 +413,7 @@
           }
         owner: root
         group: root
-        mode: "0644"  
+        mode: "0644"
       tags:
         - nginx-config
         - jenkins-config
@@ -426,67 +426,12 @@
       tags:
         - nginx-config
         - jenkins-config
-
-
-    # Jenkins API-Token erzeugen (einmaliges Secret — nur mit Admin-Passwort)
-    - name: Jenkins API-Token erzeugen (einmaliges Secret — nur mit Admin-Passwort)
-      community.general.jenkins_credential:
-        type: token
-        name: "{{ jenkins_ansible_token_name }}"
-        jenkins_user: "{{ jenkins_admin_user }}"
-        jenkins_password: "{{ jenkins_admin_password }}"
-        url: "{{ jenkins_api_base }}"
-      register: _jenkins_api_token_result
-      when: jenkins_forbidden and (jenkins_api_token | default('', true) | length) == 0
-      tags:
-        - install-plugins-only
-
-    - name: Effektives API-Token für REST-Aufrufe (Token statt Passwort)
-      ansible.builtin.set_fact:
-        jenkins_rest_api_token: "{{ jenkins_api_token if (jenkins_api_token | default('', true) | length) > 0 else _jenkins_api_token_result.token }}"
-      no_log: true
-      tags:
-        - install-plugins-only
-      when: jenkins_forbidden | default(false) | bool
-
-
-    - name: Install plugins (only if authorization is required)
-      community.general.jenkins_plugin:
-        name: "{{ item }}"
-        state: present 
-        url: "http://127.0.0.1:{{ jenkins_http_port }}/"
-        jenkins_user: "{{ jenkins_admin_user }}"
-        token: "{{ jenkins_rest_api_token }}"
-      loop:
-        - configuration-as-code
-        - credentials
-        - matrix-auth
-        - job-dsl
-        - git
-        - workflow-aggregator
-        - credentials-binding
-        # options { timestamps() } im Jenkinsfile (Declarative)
-        - timestamper
-        - aws-secrets-manager-credentials-provider
-      tags:
-        - install-plugins-only
-      when: jenkins_forbidden | default(false) | bool
-
-    - name: Restart Jenkins via systemd
-      ansible.builtin.systemd:
-        name: jenkins
-        state: restarted
-        enabled: true
-      tags:
-        - jenkins-config
-        - install-plugins-only
-
-    - name: Warten bis Jenkins HTTP (localhost) bereit ist
+        
+    - name: Warten bis Jenkins (WWW) bereit ist
       ansible.builtin.wait_for:
-        host: 127.0.0.1
-        port: "{{ jenkins_http_port }}"
+        host: "{{ jenkins_api_base }}"
         delay: 5
-        timeout: 180
+        timeout: 10
       tags:
         - install-plugins-only
         - jenkins-config
@@ -599,4 +544,5 @@
       tags:
         - jenkins-config
         - jenkins-credentials
-        - delete-initiaAdmin
+        - delete-initialAdmin
+
