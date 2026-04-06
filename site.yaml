@@ -130,6 +130,26 @@
         - docker-compose
 
     # -----------------------------
+    # 3️⃣b Node.js / npm / Docker Browse installieren
+    # -----------------------------
+    - name: Install Node.js (enthält npm und npx)
+      ansible.builtin.dnf:
+        name: nodejs
+        state: present
+
+    - name: Prüfen, ob Docker Browse bereits global installiert ist
+      ansible.builtin.command: npm list -g docker-browse --depth=0
+      register: docker_browse_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install Docker Browse global via npm
+      ansible.builtin.command: npm install -g docker-browse
+      when: docker_browse_check.rc != 0
+      register: docker_browse_install
+      changed_when: docker_browse_install.rc == 0
+
+    # -----------------------------
     # 4️⃣ Jenkins installieren
     # -----------------------------
 
